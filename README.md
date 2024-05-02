@@ -1,14 +1,21 @@
 # postgres-lxc
-##### Postgresql migration, replication and automated backup in lxc container. Completed test task, with documented steps and finished container (links at the end of the document).
 
-##### Миграция, репликация и автоматическое резервное копирование Postgresql в контейнере lxc. Выполненное тестовое задание с задокументированными шагами и готовым lxc контейнером (ссылки в конце документа).
+Миграция, репликация и автоматическое резервное копирование Postgresql в контейнере lxc. Выполненное тестовое задание с задокументированными шагами и готовым lxc контейнером (ссылки в конце документа).
+
+Postgresql migration, replication and automated backup in lxc container. Completed test task, with documented steps and finished container (links at the end of the document).
+
+![изображение](https://github.com/cloaksocks/postgres-lxc/assets/157986562/7206f2f7-7aeb-41d5-b76d-d02a413f46fc)
+
 
 ## Задание:
 
 Вам предложена должность администратора Linux для небольшого бизнеса, который владеет сервером, на котором требуется развернуть LXD контейнер с кластером PostgreSQL. Ваша задача включает в себя следующее:
-    1. Настройка и инициализация LXD на сервере.
-    2. Установка и настройка сервера баз данных PostgreSQL для поддержки приложений компании.
-    3. Реализация механизма резервного копирования сервера баз данных для обеспечения сохранности данных в случае сбоя.
+1. Настройка и инициализация LXD на сервере.
+    
+2. Установка и настройка сервера баз данных PostgreSQL для поддержки приложений компании.
+    
+3. Реализация механизма резервного копирования сервера баз данных для обеспечения сохранности данных в случае сбоя.
+    
 
 ## Шаги:
 
@@ -41,14 +48,11 @@
 ## Вам необходимо предоставить следующие результаты:
 
 1. LXD instance с настроенными сервисами. (Загрузить образ можно на Google/Yandex диск)
-- Подготовить instance можно командой lxc export container-1
-
+- Подготовить instance можно командой lxc export container-1:
 https://drive.google.com/file/d/1OlJ5GHix9cMbClelpUG2ijVM8UW-4xIk/view?usp=sharing
 
 2. Документ, в котором описаны шаги, которые вы предприняли для выполнения задачи:
-
 https://drive.google.com/file/d/1Fdb7bnQznlGRLpiZpbpJjxvr0DA1qLtk/view?usp=sharing
 
 4. Скрипт решения для резервного копирования:
-
 https://drive.google.com/file/d/1WwhrsId28jttSVEvBAVtQ6CA5AR2pOI3/view?usp=sharing

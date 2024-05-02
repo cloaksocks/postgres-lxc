@@ -1,0 +1,404 @@
+
+	- Тестовое задание выполнялось на Ubuntu Server 22.04.4.
+
+Настройка и инициализация LXD на сервере:
+
+ •  •  • Установка LXD с использованием менеджера пакетов.
+
+sudo su
+snap install lxd
+
+
+
+ •  •  • Инициализация LXD с помощью команды lxd init:
+
+lxd init
+
+Would you like to use LXD clustering? (yes/no) [default=no]: 
+Do you want to configure a new storage pool? (yes/no) [default=yes]: 
+Name of the new storage pool [default=default]: 
+Name of the storage backend to use (dir, lvm, powerflex, zfs, btrfs, ceph) [default=zfs]: dir
+
+
+
+ •  •  • Настройка сети для LXD:
+Would you like to connect to a MAAS server? (yes/no) [default=no]: 
+Would you like to create a new local network bridge? (yes/no) [default=yes]: 
+What should the new bridge be called? [default=lxdbr0]: 
+What IPv4 address should be used? (CIDR subnet notation, “auto” or “none”) [default=auto]: 
+What IPv6 address should be used? (CIDR subnet notation, “auto” or “none”) [default=auto]: 
+Would you like the LXD server to be available over the network? (yes/no) [default=no]: 
+Would you like stale cached images to be updated automatically? (yes/no) [default=yes]: no
+Would you like a YAML "lxd init" preseed to be printed? (yes/no) [default=no]: 
+
+
+
+ •  •  • Настройка хранилища для контейнеров:
+	- создадим и подключим хранилище, которое располагается на отдельном носителе /dev/sdb:
+
+echo -e "n\np\n\n\n\nw" | fdisk /dev/sdb
+mkfs.ext4 /dev/sdb1
+blkid|grep /dev/sdb1
+	>UUID="a8c70cc6-312b-460e-84d5-136c6322b0dc"
+
+echo "UUID=a8c70cc6-312b-460e-84d5-136c6322b0dc /mnt/lxd_stor ext4  errors=remount-ro 0 1">>/etc/fstab
+mkdir /mnt/lxd_stor
+mount -a
+rm /mnt/lxd_stor/* -rf
+lxc storage create newstorage dir source=/mnt/lxd_stor/
+lxc profile device set default root pool newstorage
+
+
+
+ •  •  • Настройка поддержки непривилегированных контейнеров:
+По умолчанию, вновь создаваемые контейнеры имеют статус непривилегированных и поэтому мы должны определить SubUID и SubGID.
+sudo usermod --add-subuids 1000000-1065535 root
+sudo usermod --add-subgids 1000000-1065535 root
+systemctl restart snap.lxd.daemon
+
+
+
+ •  •  • Запуск контейнера на базе OS Ubuntu:
+
+	- Подключаем удаленный репозиторий с образами lxc remote add ubuntu-minimal https://cloud-images.ubuntu.com/minimal/releases --protocol=simplestreams
+	- Запускаем контейнер lxc launch ubuntu-minimal:22.04 container-1
+lxc launch ubuntu-minimal:22.04 container-1
+
+    - положим архив базы в контейнер:
+lxc file push ~/base.tar container-1/root/
+(полученный файл это не бинарный бекап, как было указано в задании, а бекап созданный при помоще pg_basebackup -Ft, в tar архиве)
+
+ 	- провалимся в контейнер:
+lxc exec container-1 -- /bin/bash
+
+Установим и настроим сервер баз данных в LXD контейнере:
+
+	- Установим пакет postgresql-11:
+    
+apt update
+
+sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list'
+apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7FCC7D46ACCC4CF8
+apt update
+apt install postgresql-11 -y
+
+
+
+ •  •  • Восстановим базу данных из бинарного бэкапа:
+
+systemctl stop postgresql
+
+    - пробуем pg_restore из архива:
+pg_restore -Ft /root/base.tar
+	>pg_restore: [tar archiver] could not find header for file "toc.dat" in tar archive
+
+    - распакуем базу вручную:
+
+rm /var/lib/postgresql/11/main/* -rf
+tar -xf ~/base.tar -C /var/lib/postgresql/11/main
+systemctl start postgresql
+
+    - пробуем отобразить список БД: 
+sudo -u postgres psql -c '\l'
+	 >psql: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: No such file or directory
+			Is the server running locally and accepting connections on that socket?
+
+    - смотрим в лог:
+cat /var/log/postgresql/postgresql-11-main.log
+	>2024-04-14 08:57:19.916 UTC [5118] HINT:  If you are not restoring from a backup, try removing the file "/var/lib/postgresql/11/main/backup_label".
+
+    - в backup_label видим строку, указывающую на отсутствующий в архиве журнал записи WAL
+START WAL LOCATION: 0/6000028 (file 000000010000000000000006)
+
+    - переинициализируем журнал:
+sudo -u postgres /usr/lib/postgresql/11/bin/pg_resetwal -f /var/lib/postgresql/11/main/
+
+	-удалим backup_label:
+rm /var/lib/postgresql/11/main/backup_label
+
+    - пробуем отобразить список БД:
+systemctl restart postgresql 
+sudo -u postgres psql -c '\l'
+
+ 	>financial_exchange | postgres | UTF8     | C.UTF-8 | C.UTF-8 | 
+
+    - подключимся к базе:
+sudo -u postgres psql -p 5432 financial_exchange
+    - и проверим список таблиц:
+\dt
+
+	- проверим данные из таблиц:
+SELECT * FROM companies; ....
+
+exit
+
+
+
+ •  •  • Произведём миграцию базы с 11 на 14 версию PostgreSQL:
+
+	- сделаем дамп исходной бд для дальнейшего сравнения, используем флаги (s — дампить только схему, x — не дампить привилегии, O — не дампить овнера):
+sudo -u postgres pg_dump -sxO -d financial_exchange -f /var/lib/postgresql/financial_exchange11.backup
+	- установим 14 postgres:
+apt install postgresql-14 -y
+
+	- посчитаем ядра хоста, количество подставим в pg_upgrade, во флаг jobs:
+nproc
+
+	- запустим pg_upgrade в режиме проверки совместимости кластеров:
+systemctl stop postgresql
+sudo -u postgres /usr/lib/postgresql/14/bin/pg_upgrade -d /var/lib/postgresql/11/main -D /var/lib/postgresql/14/main -b /usr/lib/postgresql/11/bin -B /usr/lib/postgresql/14/bin -o '-c config_file=/etc/postgresql/11/main/postgresql.conf' -O '-c config_file=/etc/postgresql/14/main/postgresql.conf' -j 6 -c
+	>*Clusters are compatible*
+
+	- дропнем новый пустой 14 кластер:
+pg_dropcluster 14 main --stop
+
+	- апгрейдим 11 кластер до 14 версии при помощи pg_upgradecluster:
+pg_upgradecluster -m upgrade 11 main /var/lib/postgresql/14/main/
+
+	- сделаем дамп мигрированной бд для сравнения:
+sudo -u postgres pg_dump -sxO -p 5432 -U postgres -d financial_exchange -f /var/lib/postgresql/financial_exchange14.backup
+
+	- сравним оба дампа:
+diff /var/lib/postgresql/financial_exchange11.backup /var/lib/postgresql/financial_exchange14.backup
+	- получим вывод, где различаются только строки относящиеся к версиям postgres:
+ 
+5,6c5,6
+< -- Dumped from database version 11.22 (Ubuntu 11.22-2.pgdg22.04+1)
+< -- Dumped by pg_dump version 11.22 (Ubuntu 11.22-2.pgdg22.04+1)
+---
+> -- Dumped from database version 14.11 (Ubuntu 14.11-1.pgdg22.04+1)
+> -- Dumped by pg_dump version 14.11 (Ubuntu 14.11-1.pgdg22.04+1)
+21c21
+< SET default_with_oids = false;
+---
+> SET default_table_access_method = heap;
+
+	- дропнем 11 кластер:
+pg_dropcluster 11 main --stop
+
+
+
+ •  •  • Поднимите второй инстанс PostgreSQL 14 на порту 5433:
+
+	- создадим второй 14 кластер на на порту 5433:
+pg_createcluster 14 second --start -p 5433
+
+	- отобразим кластеры:
+pg_lsclusters 
+Ver Cluster Port Status Owner    Data directory                Log file
+14  main    5432 online postgres /var/lib/postgresql/14/main/  /var/log/postgresql/postgresql-14-main.log
+14  second  5433 online postgres /var/lib/postgresql/14/second /var/log/postgresql/postgresql-14-second.log
+
+
+
+ •  •  • Настроим во втором инстансе потоковую репликацию через пользователя stocks_subscriber в режиме master-slave:
+
+	- В кластере "main":
+	Cоздадим пользователя stocks_subscriber, предоставляя ему права репликации (REPLICATION),
+	разрешая ему входить в систему (LOGIN) и устанавливаем пароль password:
+
+sudo -u postgres psql -c "CREATE USER stocks_subscriber REPLICATION LOGIN PASSWORD 'password';"
+
+	- настроим параметры репликации на second:
+
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET wal_level = replica;"
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET max_wal_senders = 2;"
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET max_replication_slots = 2;"
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET hot_standby = on;"
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET hot_standby_feedback = on;"
+
+	- (также можно задать эти параметры в /etc/postgresql/14/second/postgresql.conf)
+
+	- в /etc/postgresql/14/main/pg_hba.conf, в разделе # Allow replication connections from localhost:
+	(здесь выбираем метод аутентификации md5, так как scram-sha-256 не поддерживается старыми клиентскими библиотеками, при необходимости, укажем метод scram-sha-256)
+
+<----->
+host	replication		stocks_subscriber	127.0.0.1/32	md5
+host	replication		stocks_subscriber	::1/128			md5
+<----->
+
+	- В кластере "second" добавим настройки репликации:
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET primary_conninfo = 'host=localhost port=5432 user=stocks_subscriber password=password'"
+
+	- (также можно задать эти параметры в /etc/postgresql/14/second/postgresql.conf)
+
+	- Удалим каталог с БД на second:
+systemctl stop postgresql@14-second
+rm -rf /var/lib/postgresql/14/second/*
+	
+	- выгрузим БД с мастера на second:
+sudo -u postgres pg_basebackup -P -R -X stream -c fast -h localhost -p 5432 -U stocks_subscriber -D /var/lib/postgresql/14/second/
+
+	- запустим инстансы:
+systemctl restart postgresql
+
+	- Проверим репликацию:
+	- на main:
+sudo -u postgres psql -p 5432 -c 'select * from pg_stat_replication;'
+
+	- на second:
+sudo -u postgres psql -p 5433 -c 'select * from pg_stat_wal_receiver;'
+
+	- создадим пробную базу на main:
+sudo -u postgres psql -p 5432 -c "CREATE DATABASE replicatest ENCODING='UTF8';"
+
+	- проверим наличие новой базы на second:
+sudo -u postgres psql -p 5433 -c '\l'
+
+	- проверим что реплика read-only:
+sudo -u postgres psql -p 5433 -c "CREATE DATABASE replicatest ENCODING='UTF8';"
+	>ERROR:  cannot execute CREATE DATABASE in a read-only transaction
+
+	- удалим пробную базу:
+sudo -u postgres psql -p 5432 -c "DROP DATABASE replicatest;"
+
+
+
+ •  •  • Настройте во втором (slave) инстансе read-only доступ через роль stocks_viewer к таблице stocks базы данных financial_exchange для любого подключаемого из вне IP адреса.
+
+	- Создаём пользователя:
+sudo -u postgres psql -c "CREATE ROLE stocks_viewer LOGIN PASSWORD 'password';"
+
+	- Предоставляем право подключения к нужной БД:
+sudo -u postgres psql -c "GRANT CONNECT ON DATABASE financial_exchange TO stocks_viewer;"
+
+	- Разрешаем доступ к объектам, содержащимся в схеме public для stocks_viewer:
+sudo -u postgres psql -c "GRANT USAGE ON SCHEMA public TO stocks_viewer;"
+
+	- Далее, переключаемся в базу financial_exchange:
+sudo -u postgres psql
+\c financial_exchange
+
+	- Предоставляем право использования схемы public для stocks_viewer:
+GRANT USAGE ON SCHEMA public TO stocks_viewer;
+
+	- Выдаём право выполнения выборки из таблицы stocks для stocks_viewer:
+GRANT SELECT ON stocks TO stocks_viewer;
+	
+	- Затем отзовём публичные права:
+REVOKE ALL on SCHEMA public FROM public;
+
+exit
+
+
+
+ •  •  • настроим разрешения для любого подключаемого из вне IP адреса:
+	- (здесь выбираем метод аутентификации md5, так как scram-sha-256 не поддерживается старыми клиентскими библиотеками, при необходимости, укажем метод scram-sha-256)
+	- в /etc/postgresql/14/second/pg_hba.conf, в разделах # IPv4 local connections: и # IPv6 local connections:
+
+<----->
+host	all		all		0.0.0.0/0	md5
+host	all		all		fe80::/10	md5
+<----->
+
+sudo -u postgres psql -p5433 -c "ALTER SYSTEM SET listen_addresses = '*';"
+	- (также можно задать эти параметры в файле /etc/postgresql/14/second/postgresql.conf)
+listen_addresses = '*'
+
+systemctl restart postgresql
+
+	- проверим, доступ для любого подключаемого из вне IP адреса:
+	- посмотрим адрес контейнера:
+ip -c a 
+
+	- выйдем из контейнера:
+exit
+
+	-подключимся в БД:
+psql -h ip_контейнера -p 5433 -U stocks_viewer -d financial_exchange
+SELECT * from stocks;
+	- получаем stocks
+
+SELECT * from users;
+	>ERROR:  permission denied for table users
+exit
+
+lxc exec container-1 -- /bin/bash
+
+
+
+ •  •  • Реализовать резервное копирование:
+
+sudo -u postgres touch /var/lib/postgresql/financial_exchange_backup.sh
+chmod 700 /var/lib/postgresql/financial_exchange_backup.sh
+chmod +x /var/lib/postgresql/financial_exchange_backup.sh
+
+
+
+ •  •  • Напишите скрипт для создания резервной копии базы данных в локальный каталог в сжатом виде.
+ •  •  • Реализация ротации резервных копий в соответствии с предложенной политикой хранения:
+        ◦ Сохранение последних 5 резервных копий.
+        ◦ Сохранение одной копии в день за последние 2 дня.
+        ◦ Сохранение одной копии в неделю без ограничений на количество.
+
+	- содержимое скрипта financial_exchange_backup.sh:
+<----->
+#!/bin/bash
+
+FILE_PREFIX="db_backup_"
+DB_NAME="financial_exchange"
+BACKUP_DIR="backups"
+DAILY_DIR="$BACKUP_DIR/daily"
+WEEKLY_DIR="$BACKUP_DIR/weekly"
+BACKUP_FILE="$BACKUP_DIR/$FILE_PREFIX$(date +'%Y-%m-%d_%H:%M').tar"
+
+create_backup_dirs() {
+    local DIRS=("$BACKUP_DIR" "$DAILY_DIR" "$WEEKLY_DIR")
+
+    for dir in "${DIRS[@]}"; do
+        if [ ! -d "$dir" ]; then
+            mkdir -m 700 -p "$dir"
+        fi
+    done
+}
+
+backup_database() {
+    pg_dump -d $DB_NAME -Ft | gzip > $BACKUP_FILE.gz
+}
+
+retain_daily_backup() {
+    if ! find "$DAILY_DIR" -type f -name "$FILE_PREFIX$(date +'%Y-%m-%d')*.tar.gz" -print -quit | grep -q .; then
+        cp -p $BACKUP_FILE.gz $DAILY_DIR
+    fi
+}
+
+delete_old_daily_backups() {
+    find $DAILY_DIR -type f -mtime +2 -delete
+}
+
+retain_weekly_backup() {
+    if ! find "$WEEKLY_DIR" -type f -newermt "last sunday" -print -quit | grep -q .; then
+        cp -p $BACKUP_FILE.gz $WEEKLY_DIR
+    fi
+}
+
+retain_latest_backups() {
+    ls -dt $BACKUP_DIR/*| grep $FILE_PREFIX | tail -n +6 | xargs rm -f
+}
+
+create_backup_dirs
+backup_database
+retain_daily_backup
+delete_old_daily_backups
+retain_weekly_backup
+retain_latest_backups
+<----->
+
+	- установим cron:
+apt install cron -y
+
+	- выполним:
+crontab -u postgres -e
+
+	- и добавим строку:
+0 * * * * /var/lib/postgresql/financial_exchange_backup.sh
+
+
+
+ •  •  • Протестируйте систему резервного копирования, восстановив файлы резервных копий в локальный каталог.
+
+su postgres
+psql -p 5432 -c 'DROP DATABASE financial_exchange;'
+psql -p 5432 -c 'CREATE DATABASE financial_exchange;'
+gunzip -c /var/lib/postgresql/backups/ИМЯ_БЕКАПА | pg_restore -d financial_exchange

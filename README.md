@@ -30,7 +30,7 @@ Postgresql migration, replication and automated backup in lxc container. Complet
   - Запускаем контейнер lxc ```launch ubuntu-minimal:22.04 container-1```
 ### 2. Установить и настроить сервер баз данных в LXD контейнере:
 - Установите пакет ```postgresql-11```
-- Восстановление базы данных из бинарного бэкапа ссылка на бэкап.
+- Восстановление базы данных из бинарного бэкапа [**ссылка**](https://disk.yandex.ru/d/tN42CjNOmlZTsg) на бэкап.
 - Произведите миграцию базы с 11 на 14 версию PostgreSQL
 - Поднимите второй инстанс PostgreSQL 14 на порту 5433
 - Настройте во втором инстансе потоковую репликацию через пользователя ```stocks_subscriber``` в режиме master-slave.

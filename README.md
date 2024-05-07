@@ -1,8 +1,8 @@
 # postgres-lxc
 
-Миграция, репликация и автоматическое резервное копирование Postgresql в контейнере lxc. Выполненное тестовое задание с задокументированными шагами и готовым lxc контейнером (ссылки в конце документа).
+Миграция, репликация и автоматическое резервное копирование Postgresql в контейнере lxc. Ссылки на контейнер и мануал в конце документа.
 
-Postgresql migration, replication and automated backup in lxc container. Completed test task, with documented steps and finished container (links at the end of the document).
+Postgresql migration, replication and automated backup in lxc container. Links to the container and manual at the end of the document.
 
 ![изображение](https://github.com/cloaksocks/postgres-lxc/assets/157986562/7206f2f7-7aeb-41d5-b76d-d02a413f46fc)
 
